@@ -9,7 +9,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "default_secret")
 
 @app.get("/healthz")
 def health():
-    return "ok"
+    return {"status": "ok", "version": os.getenv("VERSION", "0.1.0")}
 
 @app.get("/mode")
 def mode():
@@ -30,6 +30,7 @@ async def webhook(request: Request):
             json={"chat_id": chat_id, "text": f"Ты написал: {message} 💬"}
         )
     return {"ok": True}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
