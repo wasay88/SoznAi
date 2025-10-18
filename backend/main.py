@@ -1,11 +1,22 @@
-from fastapi import FastAPI, Request
-import os
-import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+import os, json, httpx, pathlib
 
-app = FastAPI()
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+FRONT = ROOT / "frontend"
+
+app = FastAPI(title="SoznAi")
+
+# статика под /static
+app.mount("/static", StaticFiles(directory=str(FRONT), html=False), name="static")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "default_secret")
+
+@app.get("/")
+def index():
+    return FileResponse(str(FRONT / "index.html"))
 
 @app.get("/healthz")
 def health():
@@ -17,20 +28,33 @@ def mode():
         return {"mode": "bot", "bot_username": "soznai_bot"}
     return {"mode": "offline"}
 
+# --- Мини-API
+@app.post("/api/v1/journal")
+async def journal(request: Request):
+    data = await request.json()
+    text = data.get("text","").strip()
+    # MVP: просто подтверждаем приём; хранилище подключим позже
+    return {"ok": bool(text)}
+
 @app.post("/webhook")
 async def webhook(request: Request):
-    data = await request.json()
-    message = data.get("message", {}).get("text", "")
-    chat_id = data.get("message", {}).get("chat", {}).get("id")
-    if not chat_id:
+    # простая проверка секрета (если используете X-Telegram-Bot-Api-Secret-Token)
+    # tg_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    # if tg_secret and tg_secret != WEBHOOK_SECRET:
+    #     return JSONResponse({"ok": False}, status_code=401)
+
+    body = await request.json()
+    msg = body.get("message", {})
+    text = msg.get("text", "")
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    if not (BOT_TOKEN and chat_id):
         return {"ok": True}
-    async with httpx.AsyncClient() as client:
+
+    reply = f"Ты написал: {text} 💬"
+    async with httpx.AsyncClient(timeout=8) as client:
         await client.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": f"Ты написал: {message} 💬"}
+            json={"chat_id": chat_id, "text": reply}
         )
     return {"ok": True}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

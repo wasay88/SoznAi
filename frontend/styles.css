@@ -1,0 +1,16 @@
+:root { --bg:#0f0f13; --ink:#fff; --muted:#9aa0a6; --brand:#6ac8ff; --accent:#b7ffa6; --card:#16181d; }
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+.top{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222}
+.brand{font-weight:700;letter-spacing:.3px}
+.mode{color:var(--muted);font-size:14px}
+.wrap{padding:16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid #222;border-radius:14px;padding:16px}
+.breath .counter{font-size:36px;font-weight:700;margin:6px 0}
+.bar{height:8px;background:#222;border-radius:999px;overflow:hidden}
+.fill{height:100%;background:linear-gradient(90deg,var(--brand),var(--accent))}
+.controls{display:flex;gap:10px;align-items:center;margin-top:10px}
+button{background:#1f2937;color:#fff;border:1px solid #2a2f39;border-radius:10px;padding:10px 14px;cursor:pointer}
+button:hover{filter:brightness(1.05)}
+input,select{background:#14161b;color:#fff;border:1px solid #2a2f39;border-radius:10px;padding:9px 12px}
+.foot{position:sticky;bottom:0;padding:12px;background:rgba(15,15,19,.7);backdrop-filter:blur(8px);border-top:1px solid #222;display:flex;justify-content:center}
+.vibro{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:14px}
