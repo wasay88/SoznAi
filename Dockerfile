@@ -1,16 +1,20 @@
 FROM python:3.11-slim
 
+# Рабочая директория внутри контейнера
 WORKDIR /app
 
-# зависимости в корне
-COPY requirements.txt .
+# Скопировать весь проект
+COPY . .
+
+# Установить зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# код
-COPY backend ./backend
-COPY frontend ./frontend
+# Добавляем путь для корректного импорта
+ENV PYTHONPATH=/app
 
-# Railway передаст PORT; main.py его прочитает
+# Настройки порта и режима вывода
+ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "backend.main"]
+# Запуск приложения
+CMD ["python", "backend/main.py"]
