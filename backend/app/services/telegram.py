@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramNetworkError, TelegramR
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types.input_file import BufferedInputFile
 
+from ..ai.costs import HardLimitExceeded
 from ..metrics import WEBHOOK_EVENTS
 from ..schemas.webhook import TelegramWebhookUpdate, WebhookResponse
 from .modes import ModeManager, ModeState
@@ -253,12 +254,21 @@ class TelegramService:
             )
         if command == "/resource":
             if self._ai_router and user_id is not None:
-                ai_reply = await self._ai_router.ask(
-                    user_id=user_id,
-                    kind="breathing_hint",
-                    text="Подскажи дыхательную практику",
-                )
-                return ([ai_reply.text], None)
+                try:
+                    ai_reply = await self._ai_router.ask(
+                        user_id=user_id,
+                        kind="breathing_hint",
+                        text="Подскажи дыхательную практику",
+                    )
+                    return ([ai_reply.text], None)
+                except HardLimitExceeded:
+                    return (
+                        [
+                            "Дневной лимит ИИ исчерпан.",
+                            "Попробуйте снова завтра или воспользуйтесь подсказкой ниже.",
+                        ],
+                        None,
+                    )
             return (
                 [
                     "Практика дыхания 1-2-3:",
@@ -324,12 +334,21 @@ class TelegramService:
                 f" последняя запись: {summary['last_entry_ts'] or 'нет записей'}."
             )
             if self._ai_router:
-                ai_reply = await self._ai_router.ask(
-                    user_id=user_id,
-                    kind="weekly_review",
-                    text=prompt,
-                )
-                return ([ai_reply.text], None)
+                try:
+                    ai_reply = await self._ai_router.ask(
+                        user_id=user_id,
+                        kind="weekly_review",
+                        text=prompt,
+                    )
+                    return ([ai_reply.text], None)
+                except HardLimitExceeded:
+                    return (
+                        [
+                            "Дневной лимит ИИ исчерпан.",
+                            "Сводка вернётся завтра, а пока посмотри статистику ниже.",
+                        ],
+                        None,
+                    )
             mood = summary["mood_avg"] or "N/A"
             last_ts = summary["last_entry_ts"] or "нет записей"
             return (
@@ -442,12 +461,17 @@ class TelegramService:
                         )
                         response_lines.append("Запись добавлена в дневник.")
                         if self._ai_router:
-                            ai_reply = await self._ai_router.ask(
-                                user_id=user_id,
-                                kind="mood_reply",
-                                text=message,
-                            )
-                            response_lines.append(ai_reply.text)
+                            try:
+                                ai_reply = await self._ai_router.ask(
+                                    user_id=user_id,
+                                    kind="mood_reply",
+                                    text=message,
+                                )
+                                response_lines.append(ai_reply.text)
+                            except HardLimitExceeded:
+                                response_lines.append(
+                                    "Дневной лимит ИИ исчерпан. Ответы появятся завтра."
+                                )
             if status.state == ModeState.OFFLINE:
                 response_lines.append("Я в офлайне, но дыхательная практика доступна в вебе.")
             elif status.state == ModeState.DEGRADED:

@@ -100,6 +100,27 @@ def test_analytics_summary_returns_aggregates(test_client: TestClient) -> None:
     assert "top_emotions" in data
 
 
+def test_weekly_insights_endpoint_returns_data(test_client: TestClient) -> None:
+    test_client.post(
+        "/api/v1/emotions",
+        json={"emotion_code": "joy", "intensity": 4},
+    )
+    test_client.post(
+        "/api/v1/journal",
+        json={"text": "Сегодня был насыщенный день", "source": "test"},
+    )
+    response = test_client.get("/api/v1/insights/weekly?range=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "items" in payload
+    if payload["items"]:
+        first = payload["items"][0]
+        assert "week_start" in first
+        assert "mood_avg" in first
+        assert "entries_count" in first
+        assert "entries_by_day" in first
+
+
 def test_magic_link_flow_sets_cookie(test_client: TestClient) -> None:
     create = test_client.post(
         "/api/v1/auth/magiclink",
@@ -126,6 +147,20 @@ def test_delete_me_wipes_data(test_client: TestClient) -> None:
     after = test_client.get("/api/v1/journal")
     assert after.status_code == 200
     assert after.json()["items"] == []
+
+
+def test_weekly_insights_recompute_requires_admin(test_client: TestClient) -> None:
+    forbidden = test_client.post("/api/v1/insights/recompute", json={})
+    assert forbidden.status_code in (401, 403)
+
+    allowed = test_client.post(
+        "/api/v1/insights/recompute",
+        json={"weeks": 1},
+        headers={"X-Soznai-Admin-Token": "test-admin"},
+    )
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert "users_processed" in body
 
 
 def test_frontend_root_served(test_client: TestClient) -> None:
@@ -269,6 +304,28 @@ def test_admin_limits_and_batch_controls(test_client: TestClient) -> None:
     )
     assert batch_toggle.status_code == 200
     assert batch_toggle.json()["enabled"] is True
+
+
+def test_admin_cache_snapshot(test_client: TestClient) -> None:
+    response = test_client.get(
+        "/api/v1/admin/cache",
+        headers={"Authorization": "Bearer test-admin"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "hit_rate" in body
+    assert "keys" in body
+
+
+def test_ai_ask_returns_429_when_hard_limit(test_client: TestClient) -> None:
+    router = test_client.app.state.ai_router
+    router._usage_tracker.limiter.set_limits(0.0, 0.0)
+    response = test_client.post(
+        "/api/v1/ai/ask",
+        json={"kind": "quick_tip", "text": "help", "locale": "ru"},
+    )
+    assert response.status_code == 429
+    assert "лимит" in response.json()["detail"].lower()
 
 
 @pytest.mark.anyio

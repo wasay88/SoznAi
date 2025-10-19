@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.app.ai.cache import PromptCache
-from backend.app.ai.costs import DailyLimiter, UsageTracker
+from backend.app.ai.costs import DailyLimiter, HardLimitExceeded, UsageTracker
 from backend.app.ai.router import AIRouter
 from backend.app.services.storage import StorageService
 
@@ -136,6 +136,6 @@ async def test_ai_router_forced_modes_and_limits(temp_session_factory) -> None:
     assert second.source == "mini"
     assert openai.calls == 2
 
-    third = await router.ask(user_id=1, kind="deep_insight", text="third unique", use_cache=False)
-    assert third.source == "local"
+    with pytest.raises(HardLimitExceeded):
+        await router.ask(user_id=1, kind="deep_insight", text="third unique", use_cache=False)
     assert openai.calls == 2

@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from ...ai import run_daily_insights
+from ...ai.costs import HardLimitExceeded
 from ...ai.router import AIRouter
 from ...core.security import (
     enforce_webhook_secret,
+    optional_admin_token,
     require_admin_token,
     resolve_authenticated_user,
 )
+from ...insights import WeeklyInsightsEngine
 from ...metrics import USER_API_COUNTER
 from ...schemas.ai import (
     AIAdminOverview,
@@ -19,6 +24,7 @@ from ...schemas.ai import (
     AIAskRequest,
     AIAskResponse,
     AIBatchToggle,
+    AICacheOverview,
     AIChartPoint,
     AIKindBreakdown,
     AILimitStatus,
@@ -36,6 +42,15 @@ from ...schemas.emotion import (
     EmotionCreateResponse,
     EmotionEntryModel,
     EmotionListResponse,
+)
+from ...schemas.insights import (
+    WeeklyDayCount,
+    WeeklyEmotionStat,
+    WeeklyInsightItem,
+    WeeklyInsightsResponse,
+    WeeklyRecomputeRequest,
+    WeeklyRecomputeResponse,
+    WeeklyWordEntry,
 )
 from ...schemas.journal import (
     JournalCreate,
@@ -71,6 +86,10 @@ def get_rate_limiter(request: Request) -> RateLimiter:
 
 def get_ai_router(request: Request) -> AIRouter:
     return request.app.state.ai_router
+
+
+def get_weekly_insights_engine(request: Request) -> WeeklyInsightsEngine:
+    return request.app.state.weekly_insights
 
 
 def _hash_user_identifier(user_id: int | None) -> str | None:
@@ -195,12 +214,18 @@ async def ai_ask(
     router: AIRouter = Depends(get_ai_router),
     user_id: int = Depends(resolve_authenticated_user),
 ) -> AIAskResponse:
-    response = await router.ask(
-        user_id=user_id,
-        kind=payload.kind,
-        text=payload.text,
-        locale=payload.locale or "ru",
-    )
+    try:
+        response = await router.ask(
+            user_id=user_id,
+            kind=payload.kind,
+            text=payload.text,
+            locale=payload.locale or "ru",
+        )
+    except HardLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
     USER_API_COUNTER.labels(endpoint="ai_ask").inc()
     return AIAskResponse(
         text=response.text,
@@ -233,6 +258,59 @@ async def list_insights(
     items = [InsightEntryModel(day=row.day, text=row.text) for row in rows]
     USER_API_COUNTER.labels(endpoint="insights_get").inc()
     return InsightListResponse(items=items)
+
+
+@router.get("/insights/weekly", response_model=WeeklyInsightsResponse)
+async def get_weekly_insights(
+    storage: StorageService = Depends(get_storage_service),
+    engine: WeeklyInsightsEngine = Depends(get_weekly_insights_engine),
+    user_id: int = Depends(resolve_authenticated_user),
+    range_weeks: int = Query(default=4, ge=1, le=12, alias="range"),
+    target_user: int | None = Query(default=None, alias="user"),
+    locale: str = Query(default="ru"),
+    is_admin: bool = Depends(optional_admin_token),
+) -> WeeklyInsightsResponse:
+    target_id = user_id
+    if target_user and target_user != user_id:
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+        target_id = target_user
+
+    locale_norm = locale if locale in {"ru", "en"} else "ru"
+    await engine.ensure_range(
+        target_id,
+        weeks=range_weeks,
+        locale=locale_norm,
+    )
+    rows = await storage.list_weekly_insights(target_id, limit=range_weeks)
+    items: list[WeeklyInsightItem] = []
+    for row in rows:
+        top_raw = json.loads(row.top_emotions or "[]")
+        words_raw = json.loads(row.journal_wordcloud or "[]")
+        day_raw = json.loads(row.entries_by_day or "[]")
+        top = [WeeklyEmotionStat.model_validate(item) for item in top_raw]
+        wordcloud = [WeeklyWordEntry.model_validate(item) for item in words_raw]
+        day_counts = [WeeklyDayCount.model_validate(item) for item in day_raw]
+        items.append(
+            WeeklyInsightItem(
+                week_start=row.week_start,
+                week_end=row.week_end,
+                mood_avg=row.mood_avg,
+                mood_volatility=row.mood_volatility,
+                top_emotions=top,
+                wordcloud=wordcloud,
+                days_with_entries=row.days_with_entries,
+                longest_streak=row.longest_streak,
+                entries_count=row.entries_count,
+                entries_by_day=day_counts,
+                summary=row.summary,
+                summary_model=row.summary_model,
+                summary_source=row.summary_source,
+                computed_at=row.computed_at,
+            )
+        )
+    USER_API_COUNTER.labels(endpoint="insights_weekly_get").inc()
+    return WeeklyInsightsResponse(user_id=target_id, range_weeks=range_weeks, items=items)
 
 
 @router.post("/auth/magiclink", response_model=AuthSessionInfo)
@@ -392,6 +470,21 @@ async def admin_toggle_batch(
     return {"enabled": enabled}
 
 
+@router.get("/admin/cache", response_model=AICacheOverview)
+async def admin_cache_snapshot(
+    storage: StorageService = Depends(get_storage_service),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+    days: int = Query(default=7, ge=1, le=30),
+    _: None = Depends(require_admin_token),
+) -> AICacheOverview:
+    if not limiter.allow("admin:cache", limit=30, window_seconds=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limited")
+    if days not in {7, 30}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="range unsupported")
+    snapshot = await storage.cache_overview(days=days)
+    return AICacheOverview.model_validate(snapshot)
+
+
 @router.get("/admin/ai/history", response_model=AIUsageHistoryResponse)
 async def admin_usage_history(
     storage: StorageService = Depends(get_storage_service),
@@ -429,3 +522,40 @@ async def admin_run_daily(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limited")
     created = await run_daily_insights(storage, router)
     return {"created": created}
+
+
+@router.post("/insights/recompute", response_model=WeeklyRecomputeResponse)
+async def recompute_weekly_insights(
+    payload: WeeklyRecomputeRequest,
+    storage: StorageService = Depends(get_storage_service),
+    engine: WeeklyInsightsEngine = Depends(get_weekly_insights_engine),
+    _: None = Depends(require_admin_token),
+) -> WeeklyRecomputeResponse:
+    locale = payload.locale if payload.locale in {"ru", "en"} else "ru"
+    if payload.user_id is not None:
+        user_ids = [payload.user_id]
+    else:
+        since = datetime.utcnow() - timedelta(days=30)
+        user_ids = list(await storage.list_recent_users(since))
+    if not user_ids:
+        return WeeklyRecomputeResponse(
+            users_processed=0,
+            weeks_requested=payload.weeks,
+            recomputed=0,
+            debounced=0,
+            empty=0,
+        )
+    updated, debounced, empty = await engine.recompute_for_users(
+        user_ids,
+        weeks=payload.weeks,
+        week_start=payload.week_start,
+        force=payload.force,
+        locale=locale,
+    )
+    return WeeklyRecomputeResponse(
+        users_processed=len(user_ids),
+        weeks_requested=payload.weeks,
+        recomputed=updated,
+        debounced=debounced,
+        empty=empty,
+    )

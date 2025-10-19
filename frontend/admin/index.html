@@ -69,6 +69,22 @@
           <button id="stop-gpt" class="danger">💡 Остановить GPT (local only)</button>
           <p id="control-status" class="muted"></p>
         </article>
+
+        <article class="card" id="cache-card">
+          <h2>Кэш</h2>
+          <div class="metrics" id="cache-metrics"></div>
+          <table class="compact">
+            <thead>
+              <tr>
+                <th>Ключ</th>
+                <th>Тип</th>
+                <th>Модель</th>
+                <th>До</th>
+              </tr>
+            </thead>
+            <tbody id="cache-keys-body"></tbody>
+          </table>
+        </article>
       </section>
 
       <section class="card charts">

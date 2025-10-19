@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from ..core.config import Settings
 from ..services.storage import StorageService
 from .cache import PromptCache
-from .costs import DailyLimiter, UsageRecord, UsageTracker
+from .costs import DailyLimiter, HardLimitExceeded, UsageRecord, UsageTracker
 from .local_llm import generate_local_response
 from .openai_client import OpenAIClient
 from .templates import choose_template
@@ -71,7 +71,6 @@ class AIRouter:
         use_cache: bool = True,
     ) -> AIResponse:
         locale_norm = locale if locale in {"ru", "en"} else "ru"
-        limiter_mode = self._limiter.mode
 
         if use_cache:
             cached = await self._cache.get(kind, text, locale_norm)
@@ -90,6 +89,14 @@ class AIRouter:
                     usd_cost=0.0,
                     cached=True,
                 )
+
+        limiter_mode = self._limiter.mode
+        if limiter_mode == "hard":
+            logger.warning(
+                "daily ai budget exhausted",
+                extra={"user_id": user_id, "kind": kind, "mode": self._mode},
+            )
+            raise HardLimitExceeded("Дневной лимит ИИ исчерпан. Попробуйте снова завтра.")
 
         route = self._select_route(kind, limiter_mode)
         logger.debug("AI route selected", extra={"kind": kind, "route": route, "mode": self._mode})
