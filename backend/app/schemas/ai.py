@@ -106,3 +106,18 @@ class InsightListResponse(BaseModel):
 
 class AIBatchToggle(BaseModel):
     enabled: bool
+
+
+class AICacheKeyInfo(BaseModel):
+    key: str
+    kind: str
+    locale: str
+    model: str
+    expires_at: datetime
+
+
+class AICacheOverview(BaseModel):
+    hits: int
+    misses: int
+    hit_rate: float
+    keys: list[AICacheKeyInfo]

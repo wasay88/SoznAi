@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 
 from fastapi import Cookie, Header, HTTPException, Request, status
 
@@ -73,10 +74,10 @@ async def require_admin_token(
     admin_header: str | None = Header(default=None, alias="X-Soznai-Admin-Token"),
 ) -> None:
     settings = request.app.state.settings
-    expected = getattr(settings, "admin_api_token", None)
+    expected = getattr(settings, "admin_api_token", None) or os.getenv("ADMIN_TOKEN")
     if not expected:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="admin disabled",
         )
     token_value: str | None = None
@@ -86,3 +87,20 @@ async def require_admin_token(
         token_value = admin_header.strip()
     if token_value != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="admin token invalid")
+
+
+async def optional_admin_token(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    admin_header: str | None = Header(default=None, alias="X-Soznai-Admin-Token"),
+) -> bool:
+    settings = request.app.state.settings
+    expected = getattr(settings, "admin_api_token", None) or os.getenv("ADMIN_TOKEN")
+    if not expected:
+        return False
+    token_value: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token_value = authorization.split(" ", 1)[1].strip()
+    elif admin_header:
+        token_value = admin_header.strip()
+    return token_value == expected

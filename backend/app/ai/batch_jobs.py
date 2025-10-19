@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from ..services.storage import StorageService
+from .costs import HardLimitExceeded
 from .router import AIRouter
 
 
@@ -41,12 +42,16 @@ async def run_daily_insights(
         if journals:
             last_note = journals[-1].entry_text[:200]
             prompt += f"\nПоследняя запись: {last_note}"
-        response = await router.ask(
-            user_id=user_id,
-            kind="weekly_review",
-            text=prompt,
-            locale=locale,
-        )
-        await storage.save_insight(user_id, date.today(), response.text)
+        try:
+            response = await router.ask(
+                user_id=user_id,
+                kind="weekly_review",
+                text=prompt,
+                locale=locale,
+            )
+            insight_text = response.text
+        except HardLimitExceeded:
+            insight_text = "Дневной лимит ИИ исчерпан. Обзор появится завтра."
+        await storage.save_insight(user_id, date.today(), insight_text)
         created += 1
     return created

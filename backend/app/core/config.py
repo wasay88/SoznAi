@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     ai_max_tokens_quick: int = Field(default=120, alias="AI_MAX_TOKENS_QUICK")
     ai_max_tokens_deep: int = Field(default=400, alias="AI_MAX_TOKENS_DEEP")
 
+    # Insight engine configuration
+    insights_ai_enabled: bool = Field(default=False, alias="INSIGHTS_AI_ENABLED")
+    insights_debounce_seconds: int = Field(default=300, alias="INSIGHTS_DEBOUNCE_SEC")
+    insights_weeks_default: int = Field(default=4, alias="INSIGHTS_WEEKS_DEFAULT")
+
     version: str = Field(default_factory=lambda: Settings._load_version())
 
     @staticmethod
@@ -80,6 +85,14 @@ class Settings(BaseSettings):
             return 86400
         ttl = int(value)
         return max(ttl, 60)
+
+    @field_validator("insights_debounce_seconds", mode="before")
+    @classmethod
+    def _validate_insights_debounce(cls, value: int | str | None) -> int:
+        if value is None:
+            return 300
+        debounce = int(value)
+        return max(debounce, 60)
 
     @field_validator("database_url", mode="before")
     @classmethod

@@ -150,6 +150,44 @@ function renderHistory(items) {
     .join("");
 }
 
+function renderCache(data) {
+  const metrics = document.getElementById("cache-metrics");
+  metrics.innerHTML = `
+    <div class="metric">
+      <span class="label">Хиты</span>
+      <span class="value">${data.hits}</span>
+    </div>
+    <div class="metric">
+      <span class="label">Промахи</span>
+      <span class="value">${data.misses}</span>
+    </div>
+    <div class="metric">
+      <span class="label">Hit-rate</span>
+      <span class="value">${Math.round(data.hit_rate * 100)}%</span>
+    </div>
+  `;
+
+  const body = document.getElementById("cache-keys-body");
+  if (!data.keys.length) {
+    body.innerHTML = `<tr><td colspan="4" class="cache-empty">Нет активных ключей</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = data.keys
+    .map((entry) => {
+      const expires = new Date(entry.expires_at).toLocaleString();
+      return `
+        <tr>
+          <td>${entry.key}</td>
+          <td>${entry.kind} (${entry.locale})</td>
+          <td>${entry.model}</td>
+          <td>${expires}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 async function refreshDashboard() {
   try {
     const stats = await fetchAdmin("/admin/ai/stats?range=7");
@@ -160,6 +198,11 @@ async function refreshDashboard() {
     const history = await fetchAdmin("/admin/ai/history?limit=50");
     if (history) {
       renderHistory(history.items);
+    }
+
+    const cache = await fetchAdmin("/admin/cache?days=7");
+    if (cache) {
+      renderCache(cache);
     }
   } catch (error) {
     showToast(error.message, "error");

@@ -148,6 +148,23 @@ th {
   letter-spacing: 0.05em;
 }
 
+table.compact th,
+table.compact td {
+  font-size: 0.8rem;
+  padding: 0.45rem 0.5rem;
+}
+
+#cache-card .metrics {
+  margin-bottom: 0.85rem;
+}
+
+.cache-empty {
+  color: #7b8794;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
 .toast {
   position: fixed;
   bottom: 1.5rem;
