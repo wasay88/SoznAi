@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoznAi — Admin</title>
+    <link rel="stylesheet" href="/admin/static/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+    <script type="module" src="/admin/static/app.js" defer></script>
+  </head>
+  <body>
+    <main class="layout">
+      <header class="header">
+        <h1>SoznAi · Админ панель</h1>
+        <p>Контроль расходов ИИ и наблюдаемости</p>
+      </header>
+
+      <section class="card" id="auth-card">
+        <h2>Авторизация</h2>
+        <p>Введите административный токен (Bearer).</p>
+        <div class="auth-form">
+          <input type="password" id="admin-token" placeholder="ADMIN_TOKEN" autocomplete="off" />
+          <button id="apply-token">Сохранить</button>
+          <button id="clear-token" class="ghost">Очистить</button>
+        </div>
+        <p id="auth-status" class="muted"></p>
+      </section>
+
+      <section class="grid">
+        <article class="card" id="overview-card">
+          <h2>Обзор</h2>
+          <div class="metrics" id="overview-metrics"></div>
+        </article>
+
+        <article class="card" id="controls-card">
+          <h2>Управление</h2>
+          <form id="limits-form" class="control-form">
+            <label>
+              Soft limit (USD)
+              <input type="number" min="0" step="0.01" id="soft-limit" required />
+            </label>
+            <label>
+              Hard limit (USD)
+              <input type="number" min="0" step="0.01" id="hard-limit" required />
+            </label>
+            <button type="submit">Обновить лимиты</button>
+          </form>
+
+          <div class="control-form">
+            <label>
+              Режим маршрутизации
+              <select id="mode-select">
+                <option value="auto">auto</option>
+                <option value="mini_only">mini_only</option>
+                <option value="turbo_only">turbo_only</option>
+                <option value="local_only">local_only</option>
+              </select>
+            </label>
+            <button id="update-mode">Применить</button>
+          </div>
+
+          <div class="control-form switch">
+            <label>
+              Ночной батч (insights)
+              <input type="checkbox" id="batch-toggle" />
+            </label>
+          </div>
+
+          <button id="stop-gpt" class="danger">💡 Остановить GPT (local only)</button>
+          <p id="control-status" class="muted"></p>
+        </article>
+      </section>
+
+      <section class="card charts">
+        <h2>Графики</h2>
+        <div class="chart-grid">
+          <canvas id="cost-chart"></canvas>
+          <canvas id="tokens-chart"></canvas>
+          <canvas id="requests-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="card history">
+        <h2>История запросов</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Модель</th>
+              <th>Источник</th>
+              <th>Тип</th>
+              <th>Tokens</th>
+              <th>USD</th>
+              <th>User</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+  </body>
+</html>

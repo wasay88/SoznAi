@@ -1,22 +1,103 @@
-name: Deploy to Railway
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main", "master"]
+  pull_request:
 
 jobs:
-  deploy:
+  build-test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          npm ci
+
+      - name: Lint Python
+        run: ruff check
+
+      - name: Run flake8
+        run: flake8 backend
+
+      - name: Run mypy
+        run: mypy backend
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Run tests with coverage
+        env:
+          VERSION: 5.1.0-ci
+        run: pytest --cov=backend --cov-report=term --cov-report=xml --cov-report=html --cov-fail-under=85
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov
+
+      - name: Build Docker image
+        run: docker build -t soznai:ci .
+
+      - name: Launch API for smoke tests
+        env:
+          VERSION: 5.1.0-ci
+          PORT: 8000
+        run: |
+          python -m backend.main &
+          echo $! > uvicorn.pid
+          sleep 5
+
+      - name: Sanity checks
+        run: |
+          curl -f http://127.0.0.1:8000/healthz
+          curl -f http://127.0.0.1:8000/api/v1/mode
+          curl -f http://127.0.0.1:8000/api/v1/journal
+          curl -f http://127.0.0.1:8000/api/v1/emotions
+          curl -f http://127.0.0.1:8000/readyz
+
+      - name: Shutdown API
+        if: always()
+        run: |
+          kill $(cat uvicorn.pid)
+          sleep 1 || true
 
       - name: Deploy to Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RAILWAY_DEPLOY_HOOK }}
         run: |
-          npm install -g @railway/cli
-          railway up --ci --service soznai --environment production --detach
-          
+          curl -X POST "${{ secrets.RAILWAY_DEPLOY_HOOK }}"
+
+      - name: Wait for production health and readiness
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          for attempt in $(seq 1 60); do
+            if health=$(curl -fsS https://soznai-production.up.railway.app/healthz) \
+              && ready=$(curl -fsS https://soznai-production.up.railway.app/readyz); then
+              echo "Health: ${health}"
+              echo "Ready: ${ready}"
+              if echo "${ready}" | grep -q '"ready":true'; then
+                echo "Production healthy and ready after ${attempt} attempt(s)."
+                exit 0
+              fi
+            fi
+            echo "Health check attempt ${attempt} failed; retrying..."
+            sleep 5
+          done
+          echo "Production health/readiness check failed" >&2
+          exit 1

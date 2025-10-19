@@ -1,360 +1,206 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>SoznAi — mini app</title>
-  <link rel="stylesheet" href="/assets/soznai.css"/>
-  <script>
-    const tg = window.Telegram ? window.Telegram.WebApp : null;
-    if(tg){ tg.expand(); tg.enableClosingConfirmation(); }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoznAi — mindful assistant</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+    <main class="app">
+      <header class="app__header">
+        <div class="app__title">
+          <h1 data-i18n="title">SoznAi</h1>
+          <p data-i18n="subtitle">Эмоции · дыхание · дневник</p>
+        </div>
+        <div class="app__meta">
+          <div class="app__identity">
+            <span id="user-indicator" class="muted" data-i18n="user.guest">Гость</span>
+          </div>
+          <span id="mode-value" class="badge">…</span>
+          <button id="lang-switch" class="ghost" type="button" data-i18n="switch">EN</button>
+        </div>
+      </header>
 
-    // --- i18n ---
-    const i18n = { data: {}, current: 'ru' };
-    async function loadLocale(lang){
-      const resp = await fetch(`/locales/${lang}.json`);
-      i18n.data = await resp.json();
-      i18n.current = lang;
-      localStorage.setItem('so_locale', lang);
-      renderAll();
-    }
-    function t(k){ return (i18n.data && i18n.data[k]) || k; }
+      <section class="status" id="status-panel">
+        <h2 data-i18n="status">Режим</h2>
+        <p id="mode-reason" class="muted"></p>
+      </section>
 
-    // Determine initial locale from Telegram or browser
-    function pickInitialLocale(){
-      const saved = localStorage.getItem('so_locale');
-      if(saved) return saved;
-      const code = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.language_code) || navigator.language || 'ru';
-      const short = code.toLowerCase().slice(0,2);
-      if(short==='ru') return 'ru';
-      if(short==='uk') return 'uk';
-      return 'en';
-    }
-    i18n.current = pickInitialLocale();
+      <nav class="tabs">
+        <button class="tab active" data-target="dashboard" data-i18n="tab.dashboard">Дашборд</button>
+        <button class="tab" data-target="companion" data-i18n="tab.companion">Компаньон</button>
+        <button class="tab" data-target="resource" data-i18n="tab.resource">Ресурс</button>
+        <button class="tab" data-target="emotions" data-i18n="tab.emotions">Эмоции</button>
+        <button class="tab" data-target="journal" data-i18n="tab.journal">Дневник</button>
+        <button class="tab" data-target="science" data-i18n="tab.science">Смысл</button>
+      </nav>
 
-    // --- Store ---
-    const store = {
-      key: 'soznai_v1',
-      data: { entries: [], stats: { mature: 0, immature: 0, trend: [] }, mood: [] },
-      load(){ try{ this.data = JSON.parse(localStorage.getItem(this.key))||this.data }catch(e){} },
-      save(){ localStorage.setItem(this.key, JSON.stringify(this.data)) },
-      addEntry(e){ 
-        this.data.entries.unshift(e); 
-        const m = isMatureWorld(e.id);
-        if(m) this.data.stats.mature++; else this.data.stats.immature++;
-        const total = this.data.stats.mature + this.data.stats.immature;
-        const idx = total ? Math.round((this.data.stats.mature/total)*100) : 0;
-        this.data.stats.trend.push({t: Date.now(), idx});
-        this.save(); 
-        renderDiary(); renderGarden();
-      },
-      addMood(v){
-        this.data.mood.push({t: Date.now(), v});
-        if(this.data.mood.length>200) this.data.mood.shift();
-        this.save(); renderMood();
-      }
-    };
-    store.load();
-
-    // --- Worlds ---
-    const WORLDS = [
-      {k:'silence', title:'Тишина', color:'var(--air)', tone:'calm', maturity:'mature', fields:[
-        {key:'people',label:'Люди-опоры',placeholder:'К кому могу обратиться'},
-        {key:'place',label:'Место/действие',placeholder:'Где мне спокойно'},
-        {key:'thought',label:'Мысль поддержки',placeholder:'…'}
-      ], artifactTitle:'Три опоры сегодня'},
-      {k:'care', title:'Забота о себе', color:'var(--water)', tone:'calm', maturity:'mature', fields:[
-        {key:'+1',label:'Что даёт +1 энергию',placeholder:'…'},
-        {key:'-1',label:'Что забирает силу',placeholder:'…'},
-        {key:'one',label:'Один маленький шаг',placeholder:'…'}
-      ], artifactTitle:'План микроподзарядок'},
-      {k:'focus', title:'Фокус', color:'var(--air)', tone:'clarity', maturity:'mature', fields:[
-        {key:'why',label:'Что важно сейчас',placeholder:'…'},
-        {key:'do3',label:'Три шага',placeholder:'1) 2) 3)'},
-        {key:'first',label:'Первый шаг сегодня',placeholder:'…'}
-      ], artifactTitle:'Фокус‑лист'},
-      {k:'energy', title:'Энергия', color:'var(--fire)', tone:'clarity', maturity:'mature', fields:[
-        {key:'move',label:'Движение 2–5 мин',placeholder:'…'},
-        {key:'sense',label:'Сенсорная подзарядка',placeholder:'звук/запах/осязание'},
-        {key:'now',label:'Что сделаю сейчас',placeholder:'…'}
-      ], artifactTitle:'Маленький шаг вперёд'},
-      {k:'relation', title:'Связь', color:'var(--water)', tone:'calm', maturity:'mature', fields:[
-        {key:'who',label:'Кому напишу/позвоню',placeholder:'…'},
-        {key:'share',label:'Что хочу сказать',placeholder:'…'},
-        {key:'when',label:'Когда сделаю',placeholder:'…'}
-      ], artifactTitle:'Пульс света'},
-      {k:'meaning', title:'Смысл', color:'var(--light)', tone:'depth', maturity:'mature', fields:[
-        {key:'value',label:'Что придаёт смысл',placeholder:'…'},
-        {key:'keep',label:'Что хочу сохранять в себе',placeholder:'…'},
-        {key:'rem',label:'Напоминание на завтра',placeholder:'…'}
-      ], artifactTitle:'Формула ценности'},
-      {k:'boundaries', title:'Границы', color:'var(--earth)', tone:'clarity', maturity:'mature', fields:[
-        {key:'situ',label:'Ситуация',placeholder:'…'},
-        {key:'say',label:'Что скажу/сделаю иначе',placeholder:'…'},
-        {key:'self',label:'Как поддержу себя',placeholder:'…'}
-      ], artifactTitle:'Моя граница сегодня'},
-      {k:'honesty', title:'Честность', color:'var(--fire)', tone:'depth', maturity:'mature', fields:[
-        {key:'truth',label:'Какая правда сейчас важна',placeholder:'…'},
-        {key:'fear',label:'Чего боюсь услышать',placeholder:'…'},
-        {key:'tiny',label:'Какой маленький честный шаг',placeholder:'…'}
-      ], artifactTitle:'Письмо поддержке'},
-      {k:'freedom', title:'Свобода', color:'var(--air)', tone:'depth', maturity:'mature', fields:[
-        {key:'let',label:'Что я отпускаю',placeholder:'…'},
-        {key:'space',label:'Как освобожу пространство',placeholder:'…'},
-        {key:'after',label:'Что почувствую',placeholder:'…'}
-      ], artifactTitle:'Что моё, что не моё'},
-      {k:'discipline', title:'Дисциплина', color:'var(--earth)', tone:'clarity', maturity:'mature', fields:[
-        {key:'rep',label:'Что повторю сегодня',placeholder:'…'},
-        {key:'time',label:'Когда/сколько',placeholder:'…'},
-        {key:'track',label:'Как отмечу',placeholder:'…'}
-      ], artifactTitle:'Фокус‑лист'},
-      {k:'action', title:'Действие', color:'var(--fire)', tone:'clarity', maturity:'mature', fields:[
-        {key:'task',label:'Что откладывал(а)',placeholder:'…'},
-        {key:'step',label:'Первый шаг (5 мин)',placeholder:'…'},
-        {key:'feel',label:'Что почувствую после',placeholder:'…'}
-      ], artifactTitle:'Маленький шаг вперёд'},
-      {k:'creativity', title:'Творчество', color:'var(--light)', tone:'depth', maturity:'mature', fields:[
-        {key:'spark',label:'Что меня зажигает',placeholder:'…'},
-        {key:'try',label:'Что попробую',placeholder:'…'},
-        {key:'share',label:'Как поделюсь',placeholder:'…'}
-      ], artifactTitle:'Пульс света'}
-    ];
-
-    function isMatureWorld(worldKey){
-      const w = WORLDS.find(x=>x.k===worldKey);
-      return w ? (w.maturity==='mature') : false;
-    }
-
-    // --- Artifacts ---
-    function artifact(id, title, fields, mode='calm'){
-      const container = document.getElementById('artifact');
-      const tline = {
-        ru: ["Всё можно делать медленно.","Ты уже сделал больше, чем кажется.","Пусть мысли проходят, как облака."],
-        en: ["You can do everything slowly.","You've done more than it seems.","Let thoughts pass like clouds."],
-        uk: ["Все можна робити повільно.","Ти вже зробив більше, ніж здається.","Нехай думки проходять, як хмари."]
-      };
-      const lang = i18n.current || 'ru';
-      const t = (tline[lang])[Math.floor(Math.random()*tline[lang].length)];
-      container.innerHTML = `
-        <div class="card">
-          <div class="small">${t('artifact')}</div>
-          <h3>${title}</h3>
-          <form id="artifactForm" class="grid">
-            ${fields.map(f => `<label><div class="small">${f.label}</div><input data-k="${f.key}" placeholder="${f.placeholder||''}" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(0,0,0,.1)"/></label>`).join('')}
-            <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
-              <button type="submit" class="btn">${t('save')}</button>
-              <button type="button" class="btn flat" onclick="exportArtifactPDF('${title}')">${t('exportPDF')}</button>
+      <section id="dashboard" class="panel active">
+        <header class="dashboard__header">
+          <div>
+            <h2 data-i18n="dashboard.title">Ваш прогресс</h2>
+            <p class="muted" data-i18n="dashboard.subtitle">Личная статистика за выбранный период.</p>
+          </div>
+          <div class="dashboard__actions">
+            <div class="range-switch" role="group" aria-label="Analytics range">
+              <button type="button" class="ghost range-switch__button active" data-range="7d" data-i18n="dashboard.range.7d">7 дней</button>
+              <button type="button" class="ghost range-switch__button" data-range="30d" data-i18n="dashboard.range.30d">30 дней</button>
             </div>
-            <button type="button" class="btn flat" onclick="switchTab('diary')">${t('toDiary')}</button>
+          </div>
+        </header>
+        <section id="dashboard-guest" class="card dashboard__guest hidden">
+          <p data-i18n="dashboard.guest">Откройте SoznAi в Telegram Mini App или авторизуйтесь через письмо, чтобы видеть аналитику.</p>
+        </section>
+        <section id="dashboard-content" class="dashboard__content hidden" aria-live="polite">
+          <div class="dashboard__metrics">
+            <article class="card metric-card">
+              <h3 data-i18n="dashboard.streak">Серия дней</h3>
+              <p id="metric-streak" class="metric-card__value">0</p>
+            </article>
+            <article class="card metric-card">
+              <h3 data-i18n="dashboard.entries">Записей</h3>
+              <p id="metric-entries" class="metric-card__value">0</p>
+            </article>
+            <article class="card metric-card">
+              <h3 data-i18n="dashboard.mood">Средняя интенсивность</h3>
+              <p id="metric-mood" class="metric-card__value">–</p>
+            </article>
+            <article class="card metric-card">
+              <h3 data-i18n="dashboard.last">Последняя запись</h3>
+              <p id="metric-last" class="metric-card__value">–</p>
+            </article>
+          </div>
+          <article class="card chart-card" id="line-chart-card">
+            <div class="chart-card__header">
+              <h3 data-i18n="dashboard.trendTitle">Тренд настроения</h3>
+              <span id="line-chart-range" class="muted"></span>
+            </div>
+            <canvas id="line-chart" height="220" role="img" aria-label="Mood trend chart"></canvas>
+            <p id="line-chart-empty" class="chart-empty muted hidden" data-i18n="dashboard.noData">Нет данных за выбранный период.</p>
+          </article>
+          <article class="card chart-card" id="bar-chart-card">
+            <div class="chart-card__header">
+              <h3 data-i18n="dashboard.emotionTitle">Топ эмоций</h3>
+            </div>
+            <canvas id="bar-chart" height="220" role="img" aria-label="Top emotions chart"></canvas>
+            <p id="bar-chart-empty" class="chart-empty muted hidden" data-i18n="dashboard.noData">Нет данных за выбранный период.</p>
+            <div id="metric-top-emotions" class="chip-list"></div>
+          </article>
+        </section>
+      </section>
+
+      <section id="companion" class="panel" data-auth-required="true">
+        <h2 data-i18n="companion.title">AI-компаньон</h2>
+        <p class="muted" data-i18n="companion.subtitle">Поделитесь состоянием или выберите подсказку.</p>
+        <section id="companion-locked" class="card companion__locked hidden" data-i18n="companion.locked">
+          Авторизуйтесь в мини-приложении, чтобы общаться с SoznAi-компаньоном.
+        </section>
+        <article id="companion-card" class="card companion">
+          <div id="companion-chips" class="companion__chips" role="group" aria-label="Companion quick prompts"></div>
+          <form id="companion-form" class="companion__form" autocomplete="off">
+            <label class="companion__label">
+              <span class="muted" data-i18n="companion.promptLabel">Расскажите, что чувствуете</span>
+              <textarea
+                id="companion-text"
+                rows="4"
+                maxlength="600"
+                data-i18n-placeholder="companion.placeholder"
+                placeholder="Например: я тревожусь перед встречей"
+              ></textarea>
+            </label>
+            <div class="actions companion__actions">
+              <button type="submit" id="companion-submit" data-i18n="companion.ask">Спросить</button>
+              <button type="button" id="companion-clear" class="ghost" data-i18n="companion.clear">Очистить</button>
+            </div>
           </form>
-          <hr/>
-          <div class="small"><em>${t}</em></div>
-        </div>`;
-      document.getElementById('artifactForm').onsubmit = (e)=>{
-        e.preventDefault();
-        const inputs = [...e.target.querySelectorAll('input')];
-        const payload = { id, title, created: new Date().toISOString(), fields: {} };
-        inputs.forEach(i => payload.fields[i.dataset.k] = i.value);
-        store.addEntry(payload);
-        alert(t('saved'));
-      };
-      switchTab('artifact');
-    }
+          <div id="companion-response" class="companion__response muted" aria-live="polite" data-i18n="companion.noResponse">
+            Ответ появится здесь.
+          </div>
+          <p id="companion-meta" class="companion__meta muted hidden">
+            <span id="companion-source-icon" aria-hidden="true">💡</span>
+            <span id="companion-source-label"></span>
+          </p>
+        </article>
+      </section>
 
-    function exportArtifactPDF(title){
-      const html = document.getElementById('artifact').innerHTML;
-      const w = window.open('', '_blank');
-      w.document.write(`<html><head><title>${title}</title><style>body{font-family:ui-sans-serif} .small{color:#555}</style></head><body>${html}</body></html>`);
-      w.document.close(); w.focus(); w.print();
-    }
-
-    // --- SOS + Emotion scale ---
-    function renderSOS(){
-      const el = document.getElementById('sos');
-      el.innerHTML = `
-        <div class="card so-breath" style="background:var(--air)">
-          <h3>${t('breath')}</h3>
-          <p class="small">${t('breathInstr')}</p>
-          <button class="btn" onclick="breath10()">${t('start')}</button>
+      <section id="resource" class="panel">
+        <h2 data-i18n="resource.title">Дыхательная практика 1-2-3</h2>
+        <p data-i18n="resource.subtitle">Следуй подсказкам и наблюдай ощущения.</p>
+        <div class="breathing-card">
+          <div class="breathing-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="breathing-progress__bar" id="breathing-progress"></div>
+          </div>
+          <p id="breathing-step" class="breathing-step" data-i18n="resource.ready">Нажми старт, чтобы начать.</p>
+          <p id="breathing-progress-label" class="muted"></p>
+          <div class="breathing-controls">
+            <label class="toggle">
+              <input type="checkbox" id="breathing-vibration" />
+              <span data-i18n="resource.vibration">Вибро-отклик</span>
+            </label>
+            <button id="breathing-start" type="button" data-i18n="resource.start">Старт</button>
+          </div>
         </div>
-        <div class="card" style="background:var(--earth)">
-          <h3>${t('grounding')}</h3>
-          <ol class="small"><li>5</li><li>4</li><li>3</li><li>2</li><li>1</li></ol>
-          <button class="btn" onclick="artifact('calm-sheet','${t('calmSheet')}',[
-            {key:'worry',label:'${t('whatWorry')}',placeholder:'...'},
-            {key:'body',label:'${t('whatBody')}',placeholder:'...'},
-            {key:'act',label:'${t('whatAct')}',placeholder:'...'}
-          ],'calm')">${t('calmSheet')}</button>
-        </div>
-        <div class="card">
-          <div class="grid" style="grid-template-columns:1fr auto;align-items:center">
-            <h3 style="margin:0">${t('emotionScale')}</h3>
-            <button class="btn flat" onclick="rateMoodPrompt()">${t('rateNow')}</button>
+      </section>
+
+      <section id="emotions" class="panel" data-auth-required="true">
+        <h2 data-i18n="emotions.title">Отметь эмоцию</h2>
+        <p class="muted" data-i18n="emotions.subtitle">Выбери чувство, затем отметь интенсивность.</p>
+        <div id="emotion-grid" class="emotion-grid" role="group" aria-label="Emotions grid"></div>
+        <form id="emotion-form" class="card">
+          <label class="slider-label">
+            <span id="emotion-intensity-label" data-i18n="emotions.intensityLabel">Интенсивность: 3/5</span>
+            <input id="emotion-intensity" type="range" min="1" max="5" value="3" />
+          </label>
+          <label>
+            <span data-i18n="emotions.note">Заметка</span>
+            <textarea id="emotion-note" rows="2" data-i18n-placeholder="emotions.notePlaceholder" placeholder="Опиши в двух словах"></textarea>
+          </label>
+          <button type="submit" data-i18n="actions.save">Сохранить</button>
+        </form>
+        <div class="list" id="emotion-list"></div>
+      </section>
+
+      <section id="journal" class="panel" data-auth-required="true">
+        <h2 data-i18n="journal.title">Запись дневника</h2>
+        <p class="muted" data-i18n="journal.subtitle">1–3 предложения помогают отследить настроение.</p>
+        <form id="journal-form" class="card" data-auth-required="true">
+          <textarea
+            id="journal-text"
+            rows="4"
+            maxlength="600"
+            data-i18n-placeholder="journal.placeholder"
+            placeholder="Сегодня я заметил..."
+          ></textarea>
+          <div class="actions">
+            <button type="submit" data-i18n="actions.save">Сохранить</button>
+            <button type="button" id="journal-send" class="ghost" data-i18n="actions.sendBot">Отправить боту</button>
           </div>
-          <div id="moodChart" class="small">${t('pathOfLight')}</div>
-        </div>`;
-      renderMood();
-    }
+        </form>
+        <div class="list" id="journal-list"></div>
+      </section>
 
-    function breath10(){
-      let n=10; const btn = document.querySelector('#sos .btn');
-      const loop = setInterval(()=>{
-        if(n<=0){ clearInterval(loop); btn.textContent='OK'; return; }
-        btn.textContent = `… ${n}`; n--; }, 6000);
-    }
+      <section id="science" class="panel">
+        <h2 data-i18n="science.title">Знания и практика</h2>
+        <article class="card science">
+          <p data-i18n="science.body1">
+            Осознанное дыхание переключает нервную систему в безопасный режим. Дыхательная практика 1-2-3 успокаивает пульс и
+            помогает вернуться в тело.
+          </p>
+          <p data-i18n="science.body2">
+            Фиксируя эмоции и короткие заметки, мы замечаем циклы настроения и быстрее находим опоры. Три минуты в день
+            формируют устойчивую привычку заботы о себе.
+          </p>
+        </article>
+      </section>
 
-    function rateMoodPrompt(){
-      const v = prompt("0–10?");
-      const num = Number(v);
-      if(!isNaN(num) && num>=0 && num<=10){ store.addMood(num); }
-    }
-    function renderMood(){
-      const el = document.getElementById('moodChart');
-      if(!el) return;
-      const pts = store.data.mood.slice(-50);
-      const w = 280, h = 80;
-      let d = "";
-      pts.forEach((p,i)=>{
-        const x = (i/(Math.max(pts.length-1,1)))*(w-10)+5;
-        const y = h - (p.v/10)*(h-10) - 5;
-        d += (i===0?"M":"L")+x+","+y+" ";
-      });
-      el.innerHTML = `<svg width="${w}" height="${h}"><path d="${d}" fill="none" stroke="#3A6AFF" stroke-width="2"/></svg>`;
-    }
+      <footer class="app__footer">
+        <span data-i18n="footer">SoznAi работает как Telegram Mini App и автономный веб-интерфейс.</span>
+      </footer>
+    </main>
 
-    // --- Worlds Grid ---
-    function renderWorlds(){
-      const el = document.getElementById('worlds');
-      el.innerHTML = '<div class="grid"></div>';
-      const grid = el.querySelector('.grid');
-      WORLDS.forEach(w => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.style.background = w.color;
-        card.innerHTML = `<div class="small">World</div><h3>${w.title}</h3><button class="btn">${t('toDiary')}</button>`;
-        card.querySelector('button').onclick = () => artifact(w.k, w.artifactTitle, w.fields, w.tone);
-        grid.appendChild(card);
-      });
-    }
-
-    // --- Diary ---
-    function renderDiary(){
-      const el = document.getElementById('diary');
-      if(!el) return;
-      el.innerHTML = `<div class="card"><div class="grid" style="grid-template-columns:1fr auto;align-items:center">
-        <h3 style="margin:0">${t('diary')}</h3>
-        <button class="btn flat" onclick="exportDiaryPDF()">${t('exportPDF')}</button>
-      </div></div>`;
-      store.data.entries.forEach(e => {
-        const card = document.createElement('div');
-        card.className='card';
-        const fields = Object.entries(e.fields).map(([k,v])=>`<div class="small"><b>${k}</b>: ${v||'-'}</div>`).join('');
-        card.innerHTML = `<div class="small">${new Date(e.created).toLocaleString()}</div><h3>${e.title}</h3>${fields}`;
-        el.appendChild(card);
-      })
-    }
-    function exportDiaryPDF(){
-      const el = document.getElementById('diary').innerHTML;
-      const w = window.open('', '_blank');
-      w.document.write(`<html><head><title>SoznAi Diary</title><style>body{font-family:ui-sans-serif} .small{color:#555}</style></head><body>${el}</body></html>`);
-      w.document.close(); w.focus(); w.print();
-    }
-
-    // --- Garden ---
-    function renderGarden(){
-      const el = document.getElementById('garden');
-      if(!el) return;
-      const {mature, immature, trend} = store.data.stats;
-      const total = mature + immature || 1;
-      const idx = Math.round((mature/total)*100);
-      const radius = 40, circumference = 2*Math.PI*radius;
-      const matureLen = (mature/total) * circumference;
-      const immLen = circumference - matureLen;
-      const donut = `
-        <svg width="120" height="120" viewBox="0 0 120 120">
-          <circle cx="60" cy="60" r="${radius}" stroke="#eee" stroke-width="16" fill="none"/>
-          <circle cx="60" cy="60" r="${radius}" stroke="#8BC34A" stroke-width="16" fill="none"
-            stroke-dasharray="${matureLen} ${immLen}" transform="rotate(-90 60 60)"/>
-          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="18" fill="#333">${idx}%</text>
-        </svg>`;
-      const pts = trend.slice(-30);
-      const w = 240, h = 60;
-      const path = pts.map((p,i)=>{
-        const x = (i/(Math.max(pts.length-1,1)))* (w-10) + 5;
-        const y = h - (p.idx/100)*(h-10) - 5;
-        return `${i===0?'M':'L'}${x},${y}`;
-      }).join(' ');
-      const spark = `<svg width="${w}" height="${h}"><path d="${path}" fill="none" stroke="#3A6AFF" stroke-width="2"/></svg>`;
-      el.innerHTML = `
-        <div class="card">
-          <h3>${t('gardenTitle')}</h3>
-          <div class="small">${t('gardenHint')}</div>
-          <div style="display:flex;gap:16px;align-items:center;margin:8px 0">${donut}
-            <div class="small">
-              ${t('mature')}: ${mature} · ${t('immature')}: ${immature}<br/>
-              Index: ${idx}%
-            </div>
-          </div>
-          <div class="small">${t('trend')}</div>
-          ${spark}
-        </div>`;
-    }
-
-    // --- Header & Switch ---
-    function renderHeader(){
-      const el = document.getElementById('header');
-      el.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h2>${t('appTitle')}</h2>
-          <div class="lang">
-            <label class="small" style="margin-right:6px">${t('lang')}:</label>
-            <select class="select" onchange="loadLocale(this.value)">
-              <option value="ru" ${i18n.current==='ru'?'selected':''}>RU</option>
-              <option value="en" ${i18n.current==='en'?'selected':''}>EN</option>
-              <option value="uk" ${i18n.current==='uk'?'selected':''}>UA</option>
-            </select>
-          </div>
-        </div>`;
-    }
-
-    function switchTab(name){
-      ['sos','worlds','artifact','diary','garden'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
-      });
-      document.getElementById(name).classList.remove('hidden');
-      if(name==='diary') renderDiary();
-      if(name==='garden') renderGarden();
-      if(name==='sos') renderMood();
-    }
-
-    function renderAll(){
-      renderHeader();
-      renderSOS();
-      renderWorlds();
-      renderDiary();
-      renderGarden();
-      switchTab('sos');
-    }
-
-    window.addEventListener('DOMContentLoaded',()=>{
-      loadLocale(i18n.current);
-    });
-  </script>
-</head>
-<body>
-  <main style="padding:16px 16px 88px">
-    <div id="header"></div>
-    <div id="sos" class="grid"></div>
-    <div id="worlds" class="grid hidden"></div>
-    <div id="artifact" class="hidden"></div>
-    <div id="diary" class="grid hidden"></div>
-    <div id="garden" class="grid hidden"></div>
-  </main>
-  <nav class="nav">
-    <button class="btn" onclick="switchTab('sos')" id="tab-sos">SOS</button>
-    <button class="btn" onclick="switchTab('worlds')" id="tab-worlds">Worlds</button>
-    <button class="btn" onclick="switchTab('diary')" id="tab-diary">Diary</button>
-    <button class="btn" onclick="switchTab('garden')" id="tab-garden">Garden</button>
-  </nav>
-</body>
+    <script src="/static/app.js" type="module"></script>
+  </body>
 </html>
