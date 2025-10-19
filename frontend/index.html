@@ -89,6 +89,68 @@
             <p id="bar-chart-empty" class="chart-empty muted hidden" data-i18n="dashboard.noData">Нет данных за выбранный период.</p>
             <div id="metric-top-emotions" class="chip-list"></div>
           </article>
+          <section class="card insights-card" id="weekly-insights-card" aria-live="polite">
+            <div class="insights-card__header">
+              <h3 data-i18n="insights.weeklyTitle">Недельные наблюдения</h3>
+              <span id="weekly-insights-range" class="muted"></span>
+            </div>
+            <div class="insights-card__overview" id="weekly-insights-overview">
+              <article class="insight-card" id="weekly-summary-card" aria-live="polite">
+                <header class="insight-card__header">
+                  <h4 data-i18n="insights.summaryTitle">Ваша неделя</h4>
+                  <p class="muted" data-i18n="insights.summarySubtitle">Баланс эмоций и записи.</p>
+                </header>
+                <div class="insight-card__skeleton">
+                  <span class="skeleton-line"></span>
+                  <span class="skeleton-line skeleton-line--short"></span>
+                </div>
+                <div class="insight-card__content hidden">
+                  <canvas id="weekly-mood-chart" height="160" role="img" aria-label="Weekly mood trend"></canvas>
+                  <p id="weekly-summary-text" class="muted"></p>
+                </div>
+              </article>
+              <article class="insight-card" id="weekly-streak-card" aria-live="polite">
+                <header class="insight-card__header">
+                  <h4 data-i18n="insights.habitTitle">Полоса привычки</h4>
+                  <p class="muted" data-i18n="insights.habitSubtitle">Дни, когда вы находили время для себя.</p>
+                </header>
+                <div class="insight-card__skeleton">
+                  <span class="skeleton-line"></span>
+                  <span class="skeleton-line skeleton-line--short"></span>
+                </div>
+                <div class="insight-card__content hidden">
+                  <canvas id="weekly-entries-chart" height="160" role="img" aria-label="Entries by weekday"></canvas>
+                  <dl class="insight-card__metrics">
+                    <div>
+                      <dt data-i18n="insights.habitThisWeek">Активных дней</dt>
+                      <dd id="weekly-habit-current">0</dd>
+                    </div>
+                    <div>
+                      <dt data-i18n="insights.habitLongest">Самая длинная серия</dt>
+                      <dd id="weekly-habit-longest">0</dd>
+                    </div>
+                  </dl>
+                </div>
+              </article>
+              <article class="insight-card" id="weekly-emotions-card" aria-live="polite">
+                <header class="insight-card__header">
+                  <h4 data-i18n="insights.emotionsTitle">Топ эмоций</h4>
+                  <p class="muted" data-i18n="insights.emotionsSubtitle">Как чувства проявлялись.</p>
+                </header>
+                <div class="insight-card__skeleton">
+                  <span class="skeleton-line"></span>
+                  <span class="skeleton-line skeleton-line--short"></span>
+                </div>
+                <div class="insight-card__content hidden">
+                  <canvas id="weekly-emotion-donut" height="160" role="img" aria-label="Top emotions share"></canvas>
+                  <p id="weekly-emotion-message" class="muted hidden"></p>
+                  <ul id="weekly-emotion-list" class="insight-card__chips" role="list"></ul>
+                </div>
+              </article>
+            </div>
+            <p id="weekly-insights-empty" class="muted hidden" data-i18n="insights.empty">Отмечайте эмоции или записи, чтобы увидеть недельные наблюдения.</p>
+            <div id="weekly-insights-grid" class="insights-grid" role="list"></div>
+          </section>
         </section>
       </section>
 

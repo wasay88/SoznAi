@@ -20,6 +20,7 @@ from .api.v1.routes import router as v1_router
 from .core.config import Settings, get_settings
 from .core.logging import configure_logging
 from .core.security import enforce_webhook_secret
+from .insights import WeeklyInsightsEngine
 from .middleware import RequestLoggingMiddleware
 from .schemas.mode import ModeResponse
 from .schemas.webhook import TelegramWebhookUpdate, WebhookResponse
@@ -72,6 +73,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         limiter=ai_limiter,
         openai_client=openai_client,
     )
+    weekly_insights = WeeklyInsightsEngine(
+        storage_service,
+        settings=settings,
+        ai_router=ai_router,
+    )
 
     telegram_service = TelegramService(
         token=settings.bot_token,
@@ -94,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ai_usage_tracker = ai_usage_tracker
     app.state.ai_cache = prompt_cache
     app.state.ai_limiter = ai_limiter
+    app.state.weekly_insights = weekly_insights
 
     logger.info("Starting SoznAi %s", settings.version)
 

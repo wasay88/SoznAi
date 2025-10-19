@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from collections import Counter
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
@@ -22,6 +23,7 @@ from ..db.models import (
     SessionToken,
     SettingEntry,
     User,
+    WeeklyInsight,
 )
 
 AI_MODE_KEY = "ai_router_mode"
@@ -580,6 +582,32 @@ class StorageService:
             "journals": journals,
         }
 
+    async def fetch_activity_range(
+        self,
+        user_id: int,
+        start: datetime,
+        end: datetime,
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            emotion_rows = await session.execute(
+                select(EmotionEntry)
+                .where(EmotionEntry.user_id == user_id)
+                .where(EmotionEntry.created_at >= start)
+                .where(EmotionEntry.created_at < end)
+                .order_by(EmotionEntry.created_at.asc())
+            )
+            journal_rows = await session.execute(
+                select(JournalEntry)
+                .where(JournalEntry.user_id == user_id)
+                .where(JournalEntry.created_at >= start)
+                .where(JournalEntry.created_at < end)
+                .order_by(JournalEntry.created_at.asc())
+            )
+            return {
+                "emotions": list(emotion_rows.scalars().all()),
+                "journals": list(journal_rows.scalars().all()),
+            }
+
     async def save_insight(self, user_id: int, day_value: date, text: str) -> None:
         async with self._session_factory() as session:
             entry = await session.scalar(
@@ -602,6 +630,85 @@ class StorageService:
                 select(InsightEntry)
                 .where(InsightEntry.user_id == user_id)
                 .order_by(InsightEntry.day.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
+    async def get_weekly_insight(
+        self, user_id: int, week_start: date
+    ) -> WeeklyInsight | None:
+        async with self._session_factory() as session:
+            return await session.scalar(
+                select(WeeklyInsight)
+                .where(WeeklyInsight.user_id == user_id)
+                .where(WeeklyInsight.week_start == week_start)
+            )
+
+    async def save_weekly_insight(
+        self,
+        *,
+        user_id: int,
+        week_start: date,
+        week_end: date,
+        mood_avg: float | None,
+        mood_volatility: float | None,
+        top_emotions: list[dict[str, object]],
+        journal_wordcloud: list[dict[str, object]],
+        days_with_entries: int,
+        longest_streak: int,
+        entries_count: int,
+        entries_by_day: list[dict[str, object]],
+        summary: str | None,
+        summary_model: str | None,
+        summary_source: str | None,
+        computed_at: datetime,
+    ) -> WeeklyInsight:
+        payload = {
+            "mood_avg": mood_avg,
+            "mood_volatility": mood_volatility,
+            "top_emotions": json.dumps(top_emotions, ensure_ascii=False),
+            "journal_wordcloud": json.dumps(journal_wordcloud, ensure_ascii=False),
+            "days_with_entries": days_with_entries,
+            "longest_streak": longest_streak,
+            "entries_count": entries_count,
+            "entries_by_day": json.dumps(entries_by_day, ensure_ascii=False),
+            "summary": summary,
+            "summary_model": summary_model,
+            "summary_source": summary_source,
+            "computed_at": computed_at,
+        }
+        async with self._session_factory() as session:
+            entry = await session.scalar(
+                select(WeeklyInsight)
+                .where(WeeklyInsight.user_id == user_id)
+                .where(WeeklyInsight.week_start == week_start)
+            )
+            if entry is None:
+                entry = WeeklyInsight(
+                    user_id=user_id,
+                    week_start=week_start,
+                    week_end=week_end,
+                    **payload,
+                )
+                session.add(entry)
+            else:
+                entry.week_end = week_end
+                for key, value in payload.items():
+                    setattr(entry, key, value)
+            await session.commit()
+            await session.refresh(entry)
+            return entry
+
+    async def list_weekly_insights(
+        self,
+        user_id: int,
+        limit: int = 4,
+    ) -> Sequence[WeeklyInsight]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(WeeklyInsight)
+                .where(WeeklyInsight.user_id == user_id)
+                .order_by(WeeklyInsight.week_start.desc())
                 .limit(limit)
             )
             return list(result.scalars().all())

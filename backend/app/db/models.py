@@ -170,6 +170,43 @@ class InsightEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class WeeklyInsight(Base):
+    """Cached weekly insight aggregates."""
+
+    __tablename__ = "weekly_insights"
+    __table_args__ = (
+        UniqueConstraint("user_id", "week_start", name="uq_weekly_insights_user_week"),
+        Index("ix_weekly_insights_user", "user_id"),
+        Index("ix_weekly_insights_week", "week_start"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    week_end: Mapped[date] = mapped_column(Date, nullable=False)
+    mood_avg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mood_volatility: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_emotions: Mapped[str] = mapped_column(Text, default="[]")
+    journal_wordcloud: Mapped[str] = mapped_column(Text, default="[]")
+    days_with_entries: Mapped[int] = mapped_column(Integer, default=0)
+    longest_streak: Mapped[int] = mapped_column(Integer, default=0)
+    entries_count: Mapped[int] = mapped_column(Integer, default=0)
+    entries_by_day: Mapped[str] = mapped_column(Text, default="[]")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
 class AIModeSwitch(Base):
     """Audit trail for AI router mode changes."""
 
@@ -200,6 +237,7 @@ __all__ = [
     "Base",
     "EmotionEntry",
     "InsightEntry",
+    "WeeklyInsight",
     "JournalEntry",
     "PromptCacheEntry",
     "SessionToken",
