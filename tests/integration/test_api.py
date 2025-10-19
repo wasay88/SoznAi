@@ -100,6 +100,27 @@ def test_analytics_summary_returns_aggregates(test_client: TestClient) -> None:
     assert "top_emotions" in data
 
 
+def test_weekly_insights_endpoint_returns_data(test_client: TestClient) -> None:
+    test_client.post(
+        "/api/v1/emotions",
+        json={"emotion_code": "joy", "intensity": 4},
+    )
+    test_client.post(
+        "/api/v1/journal",
+        json={"text": "Сегодня был насыщенный день", "source": "test"},
+    )
+    response = test_client.get("/api/v1/insights/weekly?range=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "items" in payload
+    if payload["items"]:
+        first = payload["items"][0]
+        assert "week_start" in first
+        assert "mood_avg" in first
+        assert "entries_count" in first
+        assert "entries_by_day" in first
+
+
 def test_magic_link_flow_sets_cookie(test_client: TestClient) -> None:
     create = test_client.post(
         "/api/v1/auth/magiclink",
@@ -126,6 +147,20 @@ def test_delete_me_wipes_data(test_client: TestClient) -> None:
     after = test_client.get("/api/v1/journal")
     assert after.status_code == 200
     assert after.json()["items"] == []
+
+
+def test_weekly_insights_recompute_requires_admin(test_client: TestClient) -> None:
+    forbidden = test_client.post("/api/v1/insights/recompute", json={})
+    assert forbidden.status_code in (401, 403)
+
+    allowed = test_client.post(
+        "/api/v1/insights/recompute",
+        json={"weeks": 1},
+        headers={"X-Soznai-Admin-Token": "test-admin"},
+    )
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert "users_processed" in body
 
 
 def test_frontend_root_served(test_client: TestClient) -> None:

@@ -1,6 +1,23 @@
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+try:  # pragma: no cover - optional dependency for lightweight testing environments
+    from prometheus_client import Counter, Histogram
+except ModuleNotFoundError:  # pragma: no cover - fallback no-op metrics
+    class _NoopMetric:
+        def labels(self, *args, **kwargs):
+            return self
+
+        def inc(self, *args, **kwargs):
+            return None
+
+        def observe(self, *args, **kwargs):
+            return None
+
+    def Counter(*args, **kwargs):  # type: ignore[misc]
+        return _NoopMetric()
+
+    def Histogram(*args, **kwargs):  # type: ignore[misc]
+        return _NoopMetric()
 
 REQUEST_COUNT = Counter(
     "soznai_requests_total",

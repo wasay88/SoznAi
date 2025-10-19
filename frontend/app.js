@@ -47,12 +47,19 @@ const state = {
   lastEmotionItems: [],
   lastJournalItems: [],
   analyticsSummary: null,
+  weeklyInsights: [],
+  weeklyInsightsRange: 4,
+  weeklyInsightsLoading: true,
+  weeklyInsightsLoaded: false,
   companion: {
     kind: "quick_tip",
     loading: false,
     lastResponse: null,
   },
 };
+
+const lazyChartObservers = new WeakMap();
+const CHART_PALETTE = ["#4c78a8", "#f58518", "#72b7b2", "#e45756", "#54a24b"];
 
 class AuthError extends Error {}
 
@@ -159,6 +166,7 @@ function applyLocale(locale) {
   updateUserIndicator();
   refreshAuthLocks();
   updateCompanionAvailability();
+  renderWeeklyInsights();
 }
 
 function toggleLocale() {
@@ -844,7 +852,14 @@ function setChartEmpty(chartId, emptyId, isEmpty) {
   }
 }
 
-function drawLineChart(canvas, points) {
+function clearCanvas(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawLineChart(canvas, points, options = {}) {
   if (!canvas) return;
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
@@ -880,11 +895,14 @@ function drawLineChart(canvas, points) {
       ctx.lineTo(x, y);
     }
   });
-  ctx.strokeStyle = "rgba(77, 123, 255, 0.9)";
+  const strokeColor = options.color || "#4c78a8";
+  const fillColor = options.fill || "rgba(76, 120, 168, 0.25)";
+
+  ctx.strokeStyle = strokeColor;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(77, 123, 255, 0.2)";
+  ctx.fillStyle = fillColor;
   ctx.beginPath();
   points.forEach((point, index) => {
     const x = margin + step * index;
@@ -932,14 +950,352 @@ function drawBarChart(canvas, items) {
     const x = margin + index * (barWidth + gap);
     const barHeight = maxValue ? (item.count / maxValue) * chartHeight : 0;
     const y = margin + chartHeight - barHeight;
+    const baseColor = item.color || "#54a24b";
     const gradient = ctx.createLinearGradient(0, y, 0, y + barHeight);
-    gradient.addColorStop(0, "rgba(77, 123, 255, 0.9)");
-    gradient.addColorStop(1, "rgba(108, 205, 255, 0.6)");
+    gradient.addColorStop(0, baseColor);
+    gradient.addColorStop(1, `${baseColor}33`);
     ctx.fillStyle = gradient;
     ctx.fillRect(x, y, barWidth, barHeight);
   });
 
   ctx.restore();
+}
+
+function drawDonutChart(canvas, items) {
+  if (!canvas) return;
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+
+  const total = items.reduce((acc, item) => acc + item.count, 0);
+  if (!total) {
+    ctx.restore();
+    return;
+  }
+
+  const radius = Math.min(width, height) / 2 - 16;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  let startAngle = -Math.PI / 2;
+
+  items.forEach((item) => {
+    const sliceAngle = (item.count / total) * Math.PI * 2;
+    const endAngle = startAngle + sliceAngle;
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY);
+    ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+    ctx.closePath();
+    ctx.fillStyle = item.color;
+    ctx.fill();
+    startAngle = endAngle;
+  });
+
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+
+  ctx.restore();
+}
+
+function lazyDraw(canvas, draw) {
+  if (!canvas) return;
+  const run = () => {
+    draw();
+    canvas.dataset.lazyReady = "true";
+  };
+  if (canvas.dataset.lazyReady === "true") {
+    run();
+    return;
+  }
+  if ("IntersectionObserver" in window) {
+    let observer = lazyChartObservers.get(canvas);
+    if (!observer) {
+      observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            observer.disconnect();
+            lazyChartObservers.delete(canvas);
+            run();
+          }
+        });
+      }, { rootMargin: "0px 0px 120px 0px" });
+      lazyChartObservers.set(canvas, observer);
+    }
+    observer.observe(canvas);
+  } else {
+    requestAnimationFrame(run);
+  }
+}
+
+function setInsightCardLoading(cardId, isLoading) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const skeleton = card.querySelector(".insight-card__skeleton");
+  const content = card.querySelector(".insight-card__content");
+  if (skeleton) {
+    skeleton.classList.toggle("hidden", !isLoading);
+  }
+  if (content) {
+    content.classList.toggle("hidden", isLoading);
+  }
+}
+
+function formatWeekday(index) {
+  const locale = state.locale === "ru" ? "ru-RU" : "en-US";
+  const base = new Date(Date.UTC(2023, 0, 2 + index));
+  return base.toLocaleDateString(locale, { weekday: "short" });
+}
+
+function aggregateDayCounts(items) {
+  const totals = Array.from({ length: 7 }, () => 0);
+  items.forEach((item) => {
+    (item.entries_by_day || []).forEach((entry) => {
+      if (typeof entry.day === "number") {
+        totals[entry.day] += entry.count ?? 0;
+      }
+    });
+  });
+  return totals.map((count, index) => ({
+    label: formatWeekday(index),
+    count,
+    color: "#54a24b",
+  }));
+}
+
+function aggregateTopEmotions(items) {
+  const totals = new Map();
+  items.forEach((item) => {
+    (item.top_emotions || []).forEach((emotion) => {
+      const current = totals.get(emotion.code) || 0;
+      totals.set(emotion.code, current + (emotion.count || 0));
+    });
+  });
+  return Array.from(totals.entries())
+    .map(([code, count], index) => {
+      const rawLabel = t(`emotions.options.${code}`);
+      const label = rawLabel.startsWith("emotions.") ? code : rawLabel;
+      return {
+        code,
+        label,
+        count,
+        color: CHART_PALETTE[index % CHART_PALETTE.length],
+      };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+}
+
+function renderWeeklyOverview(items) {
+  const summaryText = document.getElementById("weekly-summary-text");
+  const moodCanvas = document.getElementById("weekly-mood-chart");
+  const entriesCanvas = document.getElementById("weekly-entries-chart");
+  const habitCurrent = document.getElementById("weekly-habit-current");
+  const habitLongest = document.getElementById("weekly-habit-longest");
+  const emotionCanvas = document.getElementById("weekly-emotion-donut");
+  const emotionList = document.getElementById("weekly-emotion-list");
+  const emotionMessage = document.getElementById("weekly-emotion-message");
+
+  if (!items.length) {
+    renderWeeklyOverviewEmpty();
+    return;
+  }
+
+  const chronological = [...items].reverse();
+  const latest = items[0];
+  const moodPoints = chronological.map((item) => ({
+    label: formatWeekRange(item.week_start, item.week_end),
+    value: typeof item.mood_avg === "number" ? item.mood_avg : null,
+  }));
+  const hasMood = moodPoints.some((point) => typeof point.value === "number");
+  if (summaryText) {
+    summaryText.textContent = t("insights.summaryDescription", {
+      mood: formatMoodValue(latest.mood_avg),
+      volatility: formatVolatility(latest.mood_volatility),
+      entries: latest.entries_count ?? 0,
+    });
+  }
+  if (moodCanvas) {
+    if (hasMood) {
+      moodCanvas.classList.remove("chart--empty");
+      lazyDraw(moodCanvas, () => drawLineChart(moodCanvas, moodPoints));
+    } else {
+      moodCanvas.classList.add("chart--empty");
+      clearCanvas(moodCanvas);
+    }
+  }
+
+  const dayCounts = aggregateDayCounts(items);
+  const hasEntries = dayCounts.some((entry) => entry.count > 0);
+  if (habitCurrent) {
+    habitCurrent.textContent = latest.days_with_entries ?? 0;
+  }
+  if (habitLongest) {
+    const longest = Math.max(
+      0,
+      ...items.map((item) => item.longest_streak ?? 0),
+    );
+    habitLongest.textContent = longest;
+  }
+  if (entriesCanvas) {
+    if (hasEntries) {
+      entriesCanvas.classList.remove("chart--empty");
+      lazyDraw(entriesCanvas, () => drawBarChart(entriesCanvas, dayCounts));
+    } else {
+      entriesCanvas.classList.add("chart--empty");
+      clearCanvas(entriesCanvas);
+    }
+  }
+
+  if (emotionList) {
+    emotionList.innerHTML = "";
+  }
+  if (emotionMessage) {
+    emotionMessage.classList.add("hidden");
+  }
+  const emotionData = aggregateTopEmotions(items);
+  const hasEmotions = emotionData.some((item) => item.count > 0);
+  if (emotionCanvas) {
+    if (hasEmotions) {
+      emotionCanvas.classList.remove("chart--empty");
+      lazyDraw(emotionCanvas, () => drawDonutChart(emotionCanvas, emotionData));
+    } else {
+      emotionCanvas.classList.add("chart--empty");
+      clearCanvas(emotionCanvas);
+    }
+  }
+  if (emotionData.length && emotionList) {
+    emotionData.forEach((item) => {
+      const li = document.createElement("li");
+      li.setAttribute("role", "listitem");
+      li.textContent = `${item.label} • ${item.count}`;
+      li.style.setProperty("--accent-color", item.color);
+      emotionList.appendChild(li);
+    });
+    emotionList.classList.remove("hidden");
+  } else {
+    if (emotionList) {
+      emotionList.classList.add("hidden");
+    }
+    if (emotionMessage) {
+      emotionMessage.textContent = t("insights.emotionsEmpty");
+      emotionMessage.classList.remove("hidden");
+    }
+  }
+}
+
+function renderWeeklyOverviewEmpty() {
+  const summaryText = document.getElementById("weekly-summary-text");
+  const moodCanvas = document.getElementById("weekly-mood-chart");
+  const entriesCanvas = document.getElementById("weekly-entries-chart");
+  const habitCurrent = document.getElementById("weekly-habit-current");
+  const habitLongest = document.getElementById("weekly-habit-longest");
+  const emotionCanvas = document.getElementById("weekly-emotion-donut");
+  const emotionList = document.getElementById("weekly-emotion-list");
+  const emotionMessage = document.getElementById("weekly-emotion-message");
+  if (summaryText) {
+    summaryText.textContent = t("insights.summaryEmpty");
+  }
+  if (habitCurrent) {
+    habitCurrent.textContent = "0";
+  }
+  if (habitLongest) {
+    habitLongest.textContent = "0";
+  }
+  clearCanvas(moodCanvas);
+  clearCanvas(entriesCanvas);
+  clearCanvas(emotionCanvas);
+  moodCanvas?.classList.add("chart--empty");
+  entriesCanvas?.classList.add("chart--empty");
+  emotionCanvas?.classList.add("chart--empty");
+  if (emotionList) {
+    emotionList.innerHTML = "";
+    emotionList.classList.add("hidden");
+  }
+  if (emotionMessage) {
+    emotionMessage.textContent = t("insights.emotionsEmpty");
+    emotionMessage.classList.remove("hidden");
+  }
+}
+
+function renderWeeklyList(items, container) {
+  container.innerHTML = "";
+  items.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "insight-item";
+    card.setAttribute("role", "listitem");
+
+    const header = document.createElement("div");
+    header.className = "insight-item__header";
+    const title = document.createElement("h4");
+    title.className = "insight-item__title";
+    title.textContent = formatWeekRange(item.week_start, item.week_end);
+    header.appendChild(title);
+    const entriesBadge = document.createElement("span");
+    entriesBadge.className = "insight-pill";
+    entriesBadge.textContent = t("insights.entries", { count: item.entries_count ?? 0 });
+    header.appendChild(entriesBadge);
+    card.appendChild(header);
+
+    const stats = document.createElement("div");
+    stats.className = "insight-item__stats";
+    stats.appendChild(buildInsightStat(t("insights.moodAvgShort"), formatMoodValue(item.mood_avg)));
+    stats.appendChild(buildInsightStat(t("insights.volatility"), formatVolatility(item.mood_volatility)));
+    stats.appendChild(buildInsightStat(t("insights.daysActive"), item.days_with_entries ?? 0));
+    stats.appendChild(buildInsightStat(t("insights.longestStreak"), item.longest_streak ?? 0));
+    card.appendChild(stats);
+
+    if (item.top_emotions && item.top_emotions.length) {
+      const badges = document.createElement("div");
+      badges.className = "insight-item__badges";
+      badges.setAttribute("aria-label", t("insights.topEmotions"));
+      item.top_emotions.slice(0, 3).forEach((emotion) => {
+        const pill = document.createElement("span");
+        pill.className = "insight-pill";
+        const rawLabel = t(`emotions.options.${emotion.code}`);
+        const label = rawLabel.startsWith("emotions.") ? emotion.code : rawLabel;
+        pill.textContent = `${label} • ${emotion.count}`;
+        badges.appendChild(pill);
+      });
+      card.appendChild(badges);
+    }
+
+    if (item.wordcloud && item.wordcloud.length) {
+      const words = document.createElement("div");
+      words.className = "insight-item__badges";
+      words.setAttribute("aria-label", t("insights.keywordsLabel"));
+      item.wordcloud.slice(0, 5).forEach((entry) => {
+        const pill = document.createElement("span");
+        pill.className = "insight-pill";
+        pill.textContent = `${entry.word} • ${entry.count}`;
+        words.appendChild(pill);
+      });
+      card.appendChild(words);
+    }
+
+    const summary = document.createElement("p");
+    summary.className = "insight-summary";
+    summary.textContent = item.summary ?? t("insights.summaryFallback");
+    card.appendChild(summary);
+
+    if (item.summary_model) {
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.textContent = t("insights.summarySource", {
+        source: item.summary_source ?? item.summary_model,
+      });
+      card.appendChild(meta);
+    }
+
+    container.appendChild(card);
+  });
 }
 
 function renderTopEmotions(items) {
@@ -976,6 +1332,22 @@ function formatDateTime(value) {
   });
 }
 
+function formatWeekRange(start, end) {
+  const locale = state.locale === "ru" ? "ru-RU" : "en-US";
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const opts = { day: "2-digit", month: "short" };
+  return `${startDate.toLocaleDateString(locale, opts)} — ${endDate.toLocaleDateString(locale, opts)}`;
+}
+
+function formatMoodValue(value) {
+  return typeof value === "number" ? value.toFixed(2) : "–";
+}
+
+function formatVolatility(value) {
+  return typeof value === "number" ? value.toFixed(2) : "–";
+}
+
 function renderSummary(summary) {
   const streakNode = document.getElementById("metric-streak");
   const entriesNode = document.getElementById("metric-entries");
@@ -986,6 +1358,49 @@ function renderSummary(summary) {
   moodNode.textContent = summary?.mood_avg ? Number(summary.mood_avg).toFixed(2) : t("dashboard.lastNone");
   lastNode.textContent = summary?.last_entry_ts ? formatDateTime(summary.last_entry_ts) : t("dashboard.lastNone");
   renderTopEmotions(summary?.top_emotions ?? []);
+}
+
+function buildInsightStat(label, value) {
+  const span = document.createElement("span");
+  span.textContent = `${label}: ${value}`;
+  return span;
+}
+
+function renderWeeklyInsights() {
+  const container = document.getElementById("weekly-insights-grid");
+  const empty = document.getElementById("weekly-insights-empty");
+  const rangeLabel = document.getElementById("weekly-insights-range");
+  const summaryCardId = "weekly-summary-card";
+  const streakCardId = "weekly-streak-card";
+  const emotionsCardId = "weekly-emotions-card";
+  const items = state.weeklyInsights ?? [];
+  if (!container || !empty || !rangeLabel) {
+    return;
+  }
+  rangeLabel.textContent = t("insights.rangeLabel", { weeks: state.weeklyInsightsRange });
+  if (state.weeklyInsightsLoading) {
+    setInsightCardLoading(summaryCardId, true);
+    setInsightCardLoading(streakCardId, true);
+    setInsightCardLoading(emotionsCardId, true);
+    empty.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  setInsightCardLoading(summaryCardId, false);
+  setInsightCardLoading(streakCardId, false);
+  setInsightCardLoading(emotionsCardId, false);
+
+  if (!items.length) {
+    empty.classList.remove("hidden");
+    renderWeeklyOverviewEmpty();
+    container.innerHTML = "";
+    return;
+  }
+
+  empty.classList.add("hidden");
+  renderWeeklyOverview(items);
+  renderWeeklyList(items, container);
 }
 
 function computeDailyPoints(emotions, rangeDays) {
@@ -1032,6 +1447,11 @@ async function refreshAnalytics(range = state.analyticsRange, { silent = false }
     setAuthenticated(true);
     state.analyticsSummary = summary;
     renderSummary(summary);
+    await loadWeeklyInsights({ range: 4, silent: true }).catch((error) => {
+      if (!(error instanceof AuthError)) {
+        console.warn("Weekly insights skipped", error);
+      }
+    });
   } catch (error) {
     if (error instanceof AuthError) {
       setAuthenticated(false);
@@ -1039,12 +1459,18 @@ async function refreshAnalytics(range = state.analyticsRange, { silent = false }
       renderSummary(null);
       setChartEmpty("line-chart", "line-chart-empty", true);
       setChartEmpty("bar-chart", "bar-chart-empty", true);
+      state.weeklyInsights = [];
+      state.weeklyInsightsLoading = false;
+      state.weeklyInsightsLoaded = true;
+      renderWeeklyInsights();
       return;
     }
     console.error("Analytics load failed", error);
     if (!silent) {
       showToast("dashboard.analyticsError", "error");
     }
+    state.weeklyInsightsLoading = false;
+    renderWeeklyInsights();
     return;
   }
 
@@ -1067,6 +1493,46 @@ async function refreshAnalytics(range = state.analyticsRange, { silent = false }
   setChartEmpty("bar-chart", "bar-chart-empty", !topEmotions.length);
   if (topEmotions.length) {
     drawBarChart(document.getElementById("bar-chart"), topEmotions);
+  }
+}
+
+async function loadWeeklyInsights({ range = state.weeklyInsightsRange, silent = false } = {}) {
+  state.weeklyInsightsLoading = true;
+  state.weeklyInsightsLoaded = false;
+  renderWeeklyInsights();
+  try {
+    const response = await authFetch(
+      `${API_BASE}/api/v1/insights/weekly?range=${range}&locale=${state.locale}`,
+      {},
+      { requireAuth: true },
+    );
+    if (!response.ok) {
+      throw new Error(`status ${response.status}`);
+    }
+    const payload = await response.json();
+    state.weeklyInsights = payload.items ?? [];
+    state.weeklyInsightsRange = payload.range_weeks ?? range;
+    state.weeklyInsightsLoaded = true;
+    return state.weeklyInsights;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      state.weeklyInsights = [];
+      state.weeklyInsightsLoaded = true;
+      if (!silent) {
+        showToast("toast.authRequired", "warning");
+      }
+      throw error;
+    }
+    console.error("Weekly insights load failed", error);
+    if (!silent) {
+      showToast("insights.error", "error");
+    }
+    state.weeklyInsights = [];
+    state.weeklyInsightsLoaded = true;
+    return [];
+  } finally {
+    state.weeklyInsightsLoading = false;
+    renderWeeklyInsights();
   }
 }
 
