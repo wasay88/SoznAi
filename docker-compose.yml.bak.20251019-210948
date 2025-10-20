@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=sqlite:///./soznai.db
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBAPP_URL=${WEBAPP_URL}
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    command: python3 -m http.server 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/frontend
+    working_dir: /frontend
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: soznai
+      POSTGRES_PASSWORD: soznai
+      POSTGRES_DB: soznai
+    ports:
+      - "5432:5432"
+    volumes:
+      - soznai_data:/var/lib/postgresql/data
+
+volumes:
+  soznai_data:
