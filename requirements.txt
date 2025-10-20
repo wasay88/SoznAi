@@ -3,3 +3,5 @@ uvicorn[standard]
 aiogram
 httpx
 python-dotenv
+
+alembic==1.13.2
